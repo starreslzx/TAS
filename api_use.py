@@ -2,12 +2,11 @@ import json
 import os
 import re
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-import uuid
+from typing import List, Dict,  Optional
 
 # 文件解析相关库
 import pdfplumber
-import docx
+from docx import Document
 import docx2txt
 
 # API调用
@@ -58,7 +57,7 @@ class ChatAnalyzer:
                         lines=[line.strip() for line in text.split('\n') if line.strip()]
                         records.extend(lines)
         except Exception as e:
-            raise Exception("PDF解析失败: {str(e)}")
+            raise Exception(f"PDF解析失败: {str(e)}")
 
         return self._clean_and_limit_records(records)
 
@@ -79,7 +78,7 @@ class ChatAnalyzer:
                 records = lines
 
         except Exception as e:
-            raise Exception("DOCX解析失败: {str(e)}")
+            raise Exception(f"DOCX解析失败: {str(e)}")
 
         return self._clean_and_limit_records(records)
 
@@ -103,7 +102,7 @@ class ChatAnalyzer:
                 else:
                     raise Exception("无法解析.doc文件，请确保安装了antiword或转换为PDF/DOCX格式")
             except Exception as e2:
-                raise Exception("DOC解析失败: {str(e)}，备选方案也失败: {str(e2)}")
+                raise Exception(f"DOC解析失败: {str(e)}，备选方案也失败: {str(e2)}")
 
         return self._clean_and_limit_records(records)
 
@@ -140,7 +139,7 @@ class ChatAnalyzer:
         formatted_records = self._format_chat_records(chat_records)
 
         # 准备API调用
-        prompt = """你是一个专业的聊天记录分析师。请分析以下聊天记录，并识别出不同的讨论话题。
+        prompt = f"""你是一个专业的聊天记录分析师。请分析以下聊天记录，并识别出不同的讨论话题。
 
 已有的群聊话题：
 {existing_topics_info if existing_topics_info else "暂无已有话题"}
@@ -201,7 +200,7 @@ class ChatAnalyzer:
 
             return updated_structure
         except Exception as e:
-            raise Exception("API调用失败: {str(e)}")
+            raise Exception(f"API调用失败: {str(e)}")
 
     def _format_existing_topics(self, topics: List[Dict]) -> str:
         """格式化已有话题信息"""
@@ -222,10 +221,10 @@ class ChatAnalyzer:
         """格式化聊天记录"""
         formatted = []
         for i, record in enumerate(records[:50], 1):
-            formatted.append("{i}. {record}")
+            formatted.append(f"{i}. {record}")
 
         if len(records) > 50:
-            formatted.append("... 等{len(records)}条记录")
+            formatted.append(f"... 等{len(records)}条记录")
 
         return "\n".join(formatted)
 
@@ -253,7 +252,7 @@ class ChatAnalyzer:
 
                 return json.loads(cleaned)
             except:
-                raise ValueError("无法解析API响应为JSON: {str(e)}\n响应内容: {response_content[:200]}...")
+                raise ValueError(f"无法解析API响应为JSON: {str(e)}\n响应内容: {response_content[:200]}...")
 
     def _update_chat_structure(self, group_name: str, new_topics: List[Dict],
                                existing_structure: Optional[Dict],
@@ -310,7 +309,7 @@ class ChatAnalyzer:
                 break
 
         if not topic_info:
-            raise ValueError("未找到话题ID: {topic_id}")
+            raise ValueError(f"未找到话题ID: {topic_id}")
 
         # 准备报告生成提示
         report_prompts={
@@ -319,7 +318,7 @@ class ChatAnalyzer:
             "analysis":"进行深入分析，包括趋势分析、观点对比、潜在问题和发展建议。"
         }
 
-        prompt="""请根据以下话题信息，生成一份{report_type}报告。
+        prompt=f"""请根据以下话题信息，生成一份{report_type}报告。
 
 群聊信息：
 - 群聊名称：{group_info['group_name']}
@@ -357,7 +356,7 @@ class ChatAnalyzer:
             return response.choices[0].message.content
 
         except Exception as e:
-            raise Exception("报告生成失败: {str(e)}")
+            raise Exception(f"报告生成失败: {str(e)}")
 
     def save_structure(self,file_path: str):
         """保存聊天结构到JSON文件"""
@@ -383,7 +382,7 @@ class ChatAnalyzer:
                     topic_name = topic["topic_name"]
                     break
 
-        full_report = """话题分析报告
+        full_report = f"""话题分析报告
 ====================
 
 报告生成时间：{timestamp}
@@ -399,3 +398,66 @@ class ChatAnalyzer:
             f.write(full_report)
 
         return output_path
+
+
+def main():
+    """示例运行函数"""
+    # 注意：需要替换为你的 API 密钥
+    API_KEY = "ms-f940f240-c625-4f7a-bbfb-5388db925ec7"  # 请替换为你的实际API密钥
+
+    # 初始化分析器
+    analyzer = ChatAnalyzer(api_key=API_KEY)
+
+    # 示例聊天记录（如果没有文件，可以使用文本列表）
+    sample_records = [
+        "2023-10-01 10:00 张三: 大家觉得这个新项目怎么样？",
+        "2023-10-01 10:05 李四: 我觉得很有前景，但需要更多细节",
+        "2023-10-01 10:10 王五: 我们需要先做市场调研",
+        "2023-10-01 10:15 张三: 同意，市场调研很重要",
+        "2023-10-01 10:20 李四: 我们可以下周开会讨论分工",
+        "2023-10-01 10:25 王五: 好的，我准备会议材料",
+        "2023-10-01 10:30 张三: 另外，关于预算的问题",
+        "2023-10-01 10:35 李四: 预算需要详细规划",
+        "2023-10-01 10:40 王五: 我们可以参考去年的项目",
+        "2023-10-01 10:45 张三: 好的，我先做个初步预算"
+    ]
+
+    try:
+        # 分析话题
+        print("开始分析聊天记录...")
+        structure = analyzer.analyze_topics(
+            group_name="项目讨论组",
+            chat_records=sample_records,
+            description="新项目初步讨论"
+        )
+
+        # 保存结构
+        analyzer.save_structure("chat_structure.json")
+        print("聊天结构已保存到 chat_structure.json")
+
+        # 如果有话题，生成报告
+        if structure["chat_groups"] and structure["chat_groups"][0]["topics"]:
+            topic_id = structure["chat_groups"][0]["topics"][0]["topic_id"]
+
+            # 生成报告
+            print(f"为话题 {topic_id} 生成报告...")
+            report = analyzer.generate_report(topic_id, "summary")
+            print("报告内容预览:")
+            print(report[:500] + "..." if len(report) > 500 else report)
+
+            # 导出报告
+            analyzer.export_report(topic_id, "report.txt", "summary")
+            print("报告已导出到 report.txt")
+
+        print("分析完成！")
+
+    except Exception as e:
+        print(f"运行出错: {e}")
+        print("请确保：")
+        print("1. 已安装所有依赖: pip install python-docx pdfplumber openai")
+        print("2. 已设置正确的 API 密钥")
+        print("3. 如果使用文件解析，确保文件路径正确")
+
+
+if __name__ == "__main__":
+    main()
