@@ -14,7 +14,7 @@ from openai import OpenAI
 
 
 class ChatAnalyzer:
-    def __init__(self, api_key: str, base_url: str = "https://api-inference.modelscope.cn/v1/"):
+    def __init__(self, api_key: str, base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"):
         """
         初始化聊天记录分析器
         """
@@ -22,7 +22,7 @@ class ChatAnalyzer:
             api_key=api_key,
             base_url=base_url
         )
-        self.model = "Qwen/Qwen2.5-Coder-32B-Instruct"
+        self.model = "qwen3-max"
         self.chat_structure = {
             "chat_groups": []
         }
@@ -403,8 +403,7 @@ class ChatAnalyzer:
 
 def main():
     """示例运行函数"""
-    # 注意：需要替换为你的 API 密钥
-    API_KEY = "ms-f940f240-c625-4f7a-bbfb-5388db925ec7"  # 请替换为你的实际API密钥
+    API_KEY = "sk-570a56309e00406c961afb132ddb9053"  # 请替换为你的实际API密钥
 
     # 初始化分析器
     analyzer = ChatAnalyzer(api_key=API_KEY)
@@ -460,5 +459,5 @@ def main():
         print("3. 如果使用文件解析，确保文件路径正确")
 
 
-#if __name__ == "__main__":
-#    main()
+if __name__ == "__main__":
+    main()
