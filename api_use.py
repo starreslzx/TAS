@@ -2,12 +2,11 @@ import json
 import os
 import re
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-import uuid
+from typing import List, Dict,  Optional
 
 # 文件解析相关库
 import pdfplumber
-import docx
+from docx import Document
 import docx2txt
 
 # API调用
@@ -15,7 +14,7 @@ from openai import OpenAI
 
 
 class ChatAnalyzer:
-    def __init__(self, api_key: str, base_url: str = "https://api-inference.modelscope.cn/v1/"):
+    def __init__(self, api_key: str, base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"):
         """
         初始化聊天记录分析器
         """
@@ -23,7 +22,7 @@ class ChatAnalyzer:
             api_key=api_key,
             base_url=base_url
         )
-        self.model = "Qwen/Qwen2.5-Coder-32B-Instruct"
+        self.model = "qwen3-max"
         self.chat_structure = {
             "chat_groups": []
         }
@@ -154,7 +153,7 @@ class ChatAnalyzer:
    话题名称（简洁明了）
    优先级（高/中/低）
    简要总结（3-5句话）
-   相关的聊天记录（选择3-5条最具代表性的记录）
+   相关的全部聊天记录，包括时间，人物，以及该人物说的话
    相关话题（与其他话题的关联）
 
 请以严格的JSON格式返回，格式如下：
@@ -338,6 +337,7 @@ class ChatAnalyzer:
 2. 使用专业但不晦涩的语言
 3. 基于提供的信息进行分析和总结
 4. 如果可能，提供有价值的见解和建议
+5. 不要有无关的字符比如**和##影响报告阅读
 
 报告格式：
 请使用纯文本格式，不要使用Markdown。"""
@@ -399,3 +399,65 @@ class ChatAnalyzer:
             f.write(full_report)
 
         return output_path
+
+
+def main():
+    """示例运行函数"""
+    API_KEY = "sk-570a56309e00406c961afb132ddb9053"  # 请替换为你的实际API密钥
+
+    # 初始化分析器
+    analyzer = ChatAnalyzer(api_key=API_KEY)
+
+    # 示例聊天记录（如果没有文件，可以使用文本列表）
+    sample_records = [
+        "2023-10-01 10:00 张三: 大家觉得这个新项目怎么样？",
+        "2023-10-01 10:05 李四: 我觉得很有前景，但需要更多细节",
+        "2023-10-01 10:10 王五: 我们需要先做市场调研",
+        "2023-10-01 10:15 张三: 同意，市场调研很重要",
+        "2023-10-01 10:20 李四: 我们可以下周开会讨论分工",
+        "2023-10-01 10:25 王五: 好的，我准备会议材料",
+        "2023-10-01 10:30 张三: 另外，关于预算的问题",
+        "2023-10-01 10:35 李四: 预算需要详细规划",
+        "2023-10-01 10:40 王五: 我们可以参考去年的项目",
+        "2023-10-01 10:45 张三: 好的，我先做个初步预算"
+    ]
+
+    try:
+        # 分析话题
+        print("开始分析聊天记录...")
+        structure = analyzer.analyze_topics(
+            group_name="项目讨论组",
+            chat_records=sample_records,
+            description="新项目初步讨论"
+        )
+
+        # 保存结构
+        analyzer.save_structure("chat_structure.json")
+        print("聊天结构已保存到 chat_structure.json")
+
+        # 如果有话题，生成报告
+        if structure["chat_groups"] and structure["chat_groups"][0]["topics"]:
+            topic_id = structure["chat_groups"][0]["topics"][0]["topic_id"]
+
+            # 生成报告
+            print(f"为话题 {topic_id} 生成报告...")
+            report = analyzer.generate_report(topic_id, "summary")
+            print("报告内容预览:")
+            print(report[:500] + "..." if len(report) > 500 else report)
+
+            # 导出报告
+            analyzer.export_report(topic_id, "report.txt", "summary")
+            print("报告已导出到 report.txt")
+
+        print("分析完成！")
+
+    except Exception as e:
+        print(f"运行出错: {e}")
+        print("请确保：")
+        print("1. 已安装所有依赖: pip install python-docx pdfplumber openai")
+        print("2. 已设置正确的 API 密钥")
+        print("3. 如果使用文件解析，确保文件路径正确")
+
+
+if __name__ == "__main__":
+   main()
