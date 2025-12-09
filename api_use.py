@@ -22,7 +22,7 @@ class ChatAnalyzer:
             api_key=api_key,
             base_url=base_url
         )
-        self.model = "qwen3-max"
+        self.model = "Qwen/Qwen2.5-7B-Instruct"
         self.chat_structure = {
             "chat_groups": []
         }
