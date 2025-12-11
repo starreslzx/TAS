@@ -79,6 +79,13 @@ class FrontendManager:
             'searcher_instance': None,  # 存储分工3实例
             'topic_graph_instance': None,  # 存储分工4实例
             'modules_initialized': False,  # 模块是否已初始化
+            'custom_group_name': "",  # 新增：用户自定义群聊名称
+            'analysis_history': [],  # 新增：分析历史记录
+            'selected_group_for_deletion': None,  # 新增：选择要删除的群聊
+            'graph_group_select': None,  # 修改：话题图谱选择的群聊（修复问题2）
+            'last_search_topic': None,  # 新增：上次搜索跳转的话题
+            'search_expanded_topic_id': None,  # 新增：搜索页面展开的话题ID
+            'search_topic_details': {},  # 新增：搜索页面话题详情状态
         }
 
         for key, default in session_defaults.items():
@@ -117,10 +124,11 @@ class FrontendManager:
             if os.path.exists(config_file):
                 with open(config_file, 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                    # 更新session state中的API配置
-                    st.session_state.api_key = config.get("api_key", "")
-                    st.session_state.base_url = config.get("base_url", "https://api-inference.modelscope.cn/v1/")
-                    return config
+                # 更新session state中的API配置
+                st.session_state.api_key = config.get("api_key", "")
+                st.session_state.base_url = config.get("base_url",
+                                                       "https://api-inference.modelscope.cn/v1/")
+                return config
             return {}
         except Exception as e:
             st.error(f"加载配置文件失败: {str(e)}")
@@ -128,8 +136,6 @@ class FrontendManager:
 
     def init_modules(self):
         """初始化所有模块"""
-        # 修改：直接初始化各分工模块实例
-
         # 初始化分工1模块（聊天记录分析）
         if DIVISION_1_AVAILABLE and st.session_state.api_key:
             try:
@@ -195,7 +201,6 @@ class FrontendManager:
 
         st.session_state.modules_initialized = True
 
-    # ==================== 修改：文件上传和分析部分 ====================
     def handle_file_upload(self):
         """处理用户上传的聊天记录文件"""
         st.sidebar.markdown("### 📁 上传聊天记录")
@@ -267,29 +272,42 @@ class FrontendManager:
                 except:
                     pass
 
-            # 触发分析按钮
-            if st.sidebar.button("🚀 开始分析", type="primary", key="analyze_button"):
-                if not self.analyzer:
-                    st.sidebar.error("请先设置正确的API密钥")
-                else:
-                    with st.spinner("正在分析聊天记录，请稍候..."):
-                        # 直接调用分工1的分析方法
-                        analysis_result = self._direct_analyze_file(uploaded_file)
-                        if analysis_result:
-                            st.session_state.analysis_data = analysis_result
-                            # 默认选择第一个群聊
-                            if analysis_result.get("chat_groups"):
-                                st.session_state.current_group = analysis_result["chat_groups"][0]["group_id"]
-                            # 构建话题映射
-                            self._build_topic_mapping()
-                            # 保存数据供其他模块使用
-                            self._save_data_to_files()
-                            # 重新初始化模块以加载新数据
-                            self.init_modules()
-                            st.sidebar.success("分析完成！")
-                            st.rerun()
-                        else:
-                            st.sidebar.error("分析失败，请检查文件格式或重试")
+        # 群聊名称自定义
+        st.sidebar.markdown("### 🏷️ 群聊设置")
+        default_group_name = f"聊天记录_{os.path.splitext(uploaded_file.name)[0]}" if uploaded_file else "默认群聊"
+        custom_group_name = st.sidebar.text_input(
+            "群聊名称",
+            value=st.session_state.custom_group_name or default_group_name,
+            help="自定义群聊名称，默认为文件名",
+            key="custom_group_name_input"
+        )
+        st.session_state.custom_group_name = custom_group_name
+
+        # 触发分析按钮
+        if st.sidebar.button("🚀 开始分析", type="primary", key="analyze_button"):
+            if not self.analyzer:
+                st.sidebar.error("请先设置正确的API密钥")
+            elif not uploaded_file:
+                st.sidebar.error("请先上传聊天记录文件")
+            else:
+                with st.spinner("正在分析聊天记录，请稍候..."):
+                    # 直接调用分工1的分析方法
+                    analysis_result = self._direct_analyze_file(uploaded_file, custom_group_name)
+                    if analysis_result:
+                        st.session_state.analysis_data = analysis_result
+                        # 默认选择第一个群聊
+                        if analysis_result.get("chat_groups"):
+                            st.session_state.current_group = analysis_result["chat_groups"][0]["group_id"]
+                        # 构建话题映射
+                        self._build_topic_mapping()
+                        # 保存数据供其他模块使用
+                        self._save_data_to_files()
+                        # 重新初始化模块以加载新数据
+                        self.init_modules()
+                        st.sidebar.success("分析完成")
+                        st.rerun()
+                    else:
+                        st.sidebar.error("分析失败，请检查文件格式或重试")
 
         return uploaded_file
 
@@ -332,8 +350,8 @@ class FrontendManager:
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
 
-    def _direct_analyze_file(self, uploaded_file):
-        """直接调用分工1进行文件分析"""
+    def _direct_analyze_file(self, uploaded_file, custom_group_name):
+        """调用分工1进行文件分析"""
         try:
             # 创建临时文件
             file_ext = os.path.splitext(uploaded_file.name)[1]
@@ -350,21 +368,30 @@ class FrontendManager:
                 records = self.analyzer.parse_file(tmp_file_path)
                 st.info(f"成功解析 {len(records)} 条记录")
 
-                # 分析话题
-                group_name = f"聊天记录_{os.path.splitext(uploaded_file.name)[0]}"
-                description = f"来自文件: {uploaded_file.name}"
-
-                # 如果有现有结构，可以合并
+                # 检查是否已存在相同名称的群聊
                 existing_structure = None
+                group_to_replace_index = -1
+
                 if st.session_state.analysis_data:
                     existing_structure = st.session_state.analysis_data
+                    # 查找是否已存在相同名称的群聊
+                    for i, group in enumerate(existing_structure.get("chat_groups", [])):
+                        if group["group_name"] == custom_group_name:
+                            group_to_replace_index = i
+                            break
+
+                # 如果有相同名称的群聊，覆盖它
+                if group_to_replace_index >= 0:
+                    # 移除旧的群聊
+                    existing_structure["chat_groups"].pop(group_to_replace_index)
+                    st.info(f"覆盖已存在的群聊: {custom_group_name}")
 
                 # 生成话题结构
                 result = self.analyzer.analyze_topics(
-                    group_name=group_name,
+                    group_name=custom_group_name,
                     chat_records=records,
                     existing_structure=existing_structure,
-                    description=description
+                    description=f"来自文件: {uploaded_file.name}"
                 )
 
                 st.success("话题分析完成")
@@ -379,7 +406,6 @@ class FrontendManager:
             st.error(f"分析过程出错: {str(e)}")
             return None
 
-    # ==================== 修改：数据保存方法 ====================
     def _save_data_to_files(self):
         """保存分析数据到文件，供其他分工使用"""
         if not st.session_state.analysis_data:
@@ -433,7 +459,6 @@ class FrontendManager:
         st.session_state.data_file = data_file
         print("✅ 数据已保存到output目录")
 
-    # ==================== 修改：搜索功能部分 ====================
     def call_search_api(self, query: str, search_type: str = "keyword"):
         """直接调用分工3的搜索功能"""
         if not self.searcher:
@@ -473,7 +498,8 @@ class FrontendManager:
                     'score': result.get('search_score', 0) / 10.0,  # 归一化到0-1
                     'search_type': 'keyword',
                     'priority': result.get('priority', '中'),
-                    'group_name': result.get('group_info', {}).get('group_name', '')
+                    'group_name': result.get('group_info', {}).get('group_name', ''),
+                    'group_id': result.get('group_info', {}).get('group_id', '')
                 })
 
         # 处理AI推荐结果
@@ -488,7 +514,8 @@ class FrontendManager:
                     'score': result.get('confidence', 0.5),
                     'search_type': 'ai',
                     'priority': topic_info.get('priority', '中'),
-                    'group_name': topic_info.get('group_info', {}).get('group_name', '')
+                    'group_name': topic_info.get('group_info', {}).get('group_name', ''),
+                    'group_id': topic_info.get('group_info', {}).get('group_id', '')
                 })
 
         return converted
@@ -498,51 +525,61 @@ class FrontendManager:
         """渲染话题关系图谱"""
         st.title("🕸️ 话题关系图谱")
 
-        # 添加控制面板
-        col1, col2, col3 = st.columns([2, 1, 1])
-
-        with col2:
-            if st.button("🔄 刷新图结构", key="refresh_graph"):
-                if self.topic_graph:
-                    try:
-                        self.topic_graph.load_from_json("output/topic_graph_data.json")
-                        st.success("图结构已刷新")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"刷新失败: {str(e)}")
-
-        with col3:
-            if st.button("📊 显示统计", key="show_stats"):
-                self._show_graph_statistics()
-
+        # 问题2：未选择群聊时不要弹出报错信息
         if not data.get("chat_groups"):
             st.info("请先上传聊天记录文件并进行分析")
             return
 
-        # 获取当前群聊的话题
-        current_group_id = st.session_state.current_group
+        # 添加群聊选择器
+        groups = data["chat_groups"]
+        group_options = ["所有群聊"] + [group['group_name'] for group in groups]
+
+        # 默认选择当前群聊
+        default_index = 0
+        if st.session_state.current_group:
+            for i, group in enumerate(groups):
+                if group["group_id"] == st.session_state.current_group:
+                    default_index = i + 1  # 因为第一个是"所有群聊"
+                    break
+
+        selected_group_index = st.selectbox(
+            "选择群聊",
+            range(len(group_options)),
+            format_func=lambda x: group_options[x],
+            key="graph_group_select",  # 修改：使用不同的key避免冲突
+            index=default_index
+        )
+
+        # 获取选择的群聊
+        selected_group_name = group_options[selected_group_index]
+
+        # 获取话题数据
         topics = []
         group_name = ""
 
-        if current_group_id:
-            for group in data["chat_groups"]:
-                if group["group_id"] == current_group_id:
+        if selected_group_name == "所有群聊":
+            # 合并所有话题
+            for group in groups:
+                topics.extend(group.get("topics", []))
+            group_name = "所有群聊"
+        else:
+            # 获取指定群聊的话题
+            for group in groups:
+                if group['group_name'] == selected_group_name:
                     topics = group.get("topics", [])
                     group_name = group['group_name']
+                    # 注意：这里不再设置session_state，避免widget冲突
                     break
 
         if not topics:
-            # 如果没有选择特定群聊，使用所有话题
-            topics = []
-            for group in data["chat_groups"]:
-                topics.extend(group.get("topics", []))
-            group_name = "所有群聊"
-
-        if not topics:
-            st.warning("没有找到话题数据")
+            # 问题2：不要弹出报错信息，只显示提示
+            st.info(f"群聊 '{selected_group_name}' 中没有找到话题数据")
             return
 
         st.caption(f"当前显示: {group_name} ({len(topics)}个话题)")
+
+        # 显示统计信息
+        self._show_graph_statistics(topics, group_name)
 
         # 使用分工4的话题图功能（如果可用）
         if self.topic_graph:
@@ -559,31 +596,35 @@ class FrontendManager:
             with col1:
                 st.metric("节点数", len(self.topic_graph.graph))
             with col2:
-                total_connections = sum(len(conn) for conn in self.topic_graph.graph.values())
-                st.metric("连接数", total_connections)
+                # 问题1：修复连接总数计算
+                # 直接统计所有连接，然后除以2（因为是无向图）
+                total_connections = 0
+                for connections in self.topic_graph.graph.values():
+                    total_connections += len(connections)
+                st.metric("连接总数", total_connections // 2)  # 双向连接，除以2避免重复计数
             with col3:
                 st.metric("话题总数", len(topics))
 
-            # 显示话题连接详情
-            if st.checkbox("显示详细连接", key="show_connections"):
-                st.write("**话题连接关系:**")
-                connection_count = 0
-                for topic in topics:
-                    topic_id = topic['topic_id']
-                    connections = self.topic_graph.graph.get(topic_id, [])
-                    if connections:
-                        connected_names = []
-                        for conn_id in connections:
-                            conn_name = self.topic_graph.get_topic_name_by_id(conn_id)
-                            if conn_name:
-                                connected_names.append(conn_name)
+        # 显示话题连接详情
+        if st.checkbox("显示详细连接", key="show_connections"):
+            st.write("**话题连接关系:**")
+            connection_count = 0
+            for topic in topics:
+                topic_id = topic['topic_id']
+                connections = self.topic_graph.graph.get(topic_id, [])
+                if connections:
+                    connected_names = []
+                    for conn_id in connections:
+                        conn_name = self.topic_graph.topic_id_to_name.get(conn_id, "未知话题")
+                        if conn_name:
+                            connected_names.append(conn_name)
 
-                        if connected_names:
-                            st.write(f"- **{topic['topic_name']}** → {', '.join(connected_names)}")
-                            connection_count += 1
+                    if connected_names:
+                        st.write(f"- **{topic['topic_name']}** → {', '.join(connected_names)}")
+                        connection_count += 1
 
-                if connection_count == 0:
-                    st.info("暂无连接关系")
+            if connection_count == 0:
+                st.info("暂无连接关系")
 
         # 使用原有的networkx可视化
         self._render_basic_topic_graph(topics, group_name)
@@ -629,7 +670,7 @@ class FrontendManager:
                         edge_count += 1
 
         if len(G.nodes()) == 0:
-            st.warning("没有可显示的话题数据")
+            st.info("没有可显示的话题数据")
             return
 
         # 使用Plotly可视化
@@ -709,61 +750,63 @@ class FrontendManager:
         # 图例说明
         st.info("💡 **图解**: 节点大小表示话题优先级，连线表示话题之间的关联关系，连线越粗表示关系强度越大")
 
-    def _show_graph_statistics(self):
+    def _show_graph_statistics(self, topics, group_name):
         """显示图结构统计信息"""
-        if not self.topic_graph:
-            st.warning("话题图模块未初始化")
+        if not topics:
             return
 
         try:
-            # 显示详细统计
-            st.subheader("📊 话题图详细统计")
+            # 计算统计信息
+            total_topics = len(topics)
 
-            # 计算各种统计信息
-            total_groups = len(self.topic_graph.chat_groups)
-            total_topics = sum(len(group.get('topics', [])) for group in self.topic_graph.chat_groups)
-            total_connections = sum(len(conn) for conn in self.topic_graph.graph.values())
-
-            # 计算连接密度
-            if total_topics > 1:
-                max_possible_connections = total_topics * (total_topics - 1) / 2
-                connection_density = total_connections / max_possible_connections if max_possible_connections > 0 else 0
-            else:
-                connection_density = 0
-
-            # 显示统计信息
-            metrics_data = [
-                ("群聊数量", total_groups),
-                ("话题总数", total_topics),
-                ("连接总数", total_connections),
-                ("连接密度", f"{connection_density:.2%}")
-            ]
-
-            cols = st.columns(4)
-            for i, (label, value) in enumerate(metrics_data):
-                with cols[i]:
-                    st.metric(label, value)
-
-            # 显示话题优先级分布
+            # 计算优先级分布（仅用于统计，不显示图表）
             priority_count = {"高": 0, "中": 0, "低": 0}
-            for group in self.topic_graph.chat_groups:
-                for topic in group.get('topics', []):
-                    priority = topic.get('priority', '中')
-                    priority_count[priority] = priority_count.get(priority, 0) + 1
+            for topic in topics:
+                priority = topic.get('priority', '中')
+                priority_count[priority] = priority_count.get(priority, 0) + 1
 
-            st.subheader("📋 话题优先级分布")
-            fig = go.Figure(data=[go.Pie(
-                labels=list(priority_count.keys()),
-                values=list(priority_count.values()),
-                hole=.3,
-                marker=dict(colors=['#FF6B6B', '#4ECDC4', '#45B7D1'])
-            )])
-            fig.update_layout(
-                title="话题优先级分布",
-                showlegend=True,
-                height=400
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            # 计算连接数（基于related_topics）
+            # 问题1：修复连接总数计算
+            total_connections = 0
+            connection_pairs = set()  # 使用集合避免重复计数
+
+            for topic in topics:
+                topic_id = topic['topic_id']
+                for related_topic_name in topic.get('related_topics', []):
+                    # 查找相关话题ID
+                    for t in topics:
+                        if t['topic_name'] == related_topic_name:
+                            related_topic_id = t['topic_id']
+                            # 创建连接对，确保总是按字母顺序排序，避免重复计数
+                            if topic_id < related_topic_id:
+                                pair = (topic_id, related_topic_id)
+                            else:
+                                pair = (related_topic_id, topic_id)
+                            connection_pairs.add(pair)
+                            break
+
+            total_connections = len(connection_pairs)
+
+            # 问题1：删除连接密度
+            # 显示统计信息
+            st.subheader("📊 话题图统计")
+            cols = st.columns(3)
+            with cols[0]:
+                st.metric("群聊", group_name)
+            with cols[1]:
+                st.metric("话题总数", total_topics)
+            with cols[2]:
+                st.metric("连接总数", total_connections)
+
+            # 显示简单的优先级计数文本
+            st.write("**话题优先级:**")
+            cols = st.columns(3)
+            with cols[0]:
+                st.metric("高优先级", priority_count.get("高", 0))
+            with cols[1]:
+                st.metric("中优先级", priority_count.get("中", 0))
+            with cols[2]:
+                st.metric("低优先级", priority_count.get("低", 0))
 
         except Exception as e:
             st.error(f"显示统计信息失败: {str(e)}")
@@ -834,6 +877,141 @@ class FrontendManager:
         except Exception as e:
             st.error(f"生成报告失败: {str(e)}")
             return None
+
+    # ==================== 新增功能：删除分析数据 ====================
+    def render_data_management(self, data):
+        """渲染数据管理页面"""
+        st.title("🗑️ 数据管理")
+
+        if not data.get("chat_groups"):
+            st.info("暂无分析数据")
+            return
+
+        st.markdown("### 已分析的群聊列表")
+
+        for i, group in enumerate(data["chat_groups"]):
+            with st.expander(f"{group['group_name']} (ID: {group['group_id']}, {len(group.get('topics', []))}个话题)"):
+                col1, col2, col3 = st.columns([3, 1, 1])
+
+                with col1:
+                    st.write(f"**描述:** {group.get('description', '暂无描述')}")
+                    st.write(f"**创建时间:** {group.get('created_time', '未知')}")
+
+                with col2:
+                    if st.button("选择删除", key=f"select_delete_{group['group_id']}"):
+                        st.session_state.selected_group_for_deletion = group['group_id']
+                        st.rerun()
+
+                with col3:
+                    if st.button("导出数据", key=f"export_{group['group_id']}"):
+                        self._export_group_data(group)
+
+        # 删除确认对话框
+        if st.session_state.selected_group_for_deletion:
+            group_to_delete = None
+            for group in data["chat_groups"]:
+                if group["group_id"] == st.session_state.selected_group_for_deletion:
+                    group_to_delete = group
+                    break
+
+            if group_to_delete:
+                st.markdown("---")
+                st.warning(f"⚠️ 确定要删除群聊 **{group_to_delete['group_name']}** 的所有分析数据吗？")
+                st.write(f"- 包含 {len(group_to_delete.get('topics', []))} 个话题")
+                st.write(f"- 描述: {group_to_delete.get('description', '暂无描述')}")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ 确认删除", type="primary"):
+                        self._delete_group_data(group_to_delete["group_id"])
+                        st.session_state.selected_group_for_deletion = None
+                        st.success("删除成功！")
+                        st.rerun()
+
+                with col2:
+                    if st.button("❌ 取消"):
+                        st.session_state.selected_group_for_deletion = None
+                        st.rerun()
+
+        # 批量操作
+        st.markdown("---")
+        st.markdown("### 批量操作")
+
+        if st.button("🗑️ 删除所有分析数据", type="secondary"):
+            if st.checkbox("确认删除所有数据，此操作不可恢复"):
+                self._delete_all_data()
+                st.success("所有分析数据已删除")
+                st.rerun()
+
+    def _delete_group_data(self, group_id):
+        """删除指定群聊的数据"""
+        if not st.session_state.analysis_data:
+            return
+
+        # 从内存数据中删除
+        new_groups = []
+        for group in st.session_state.analysis_data.get("chat_groups", []):
+            if group["group_id"] != group_id:
+                new_groups.append(group)
+
+        st.session_state.analysis_data["chat_groups"] = new_groups
+
+        # 更新当前选择的群聊
+        if st.session_state.current_group == group_id:
+            if new_groups:
+                st.session_state.current_group = new_groups[0]["group_id"]
+            else:
+                st.session_state.current_group = None
+
+        # 重新构建话题映射
+        self._build_topic_mapping()
+
+        # 保存到文件
+        self._save_data_to_files()
+
+    def _delete_all_data(self):
+        """删除所有分析数据"""
+        st.session_state.analysis_data = {"chat_groups": []}
+        st.session_state.current_group = None
+        st.session_state.topic_mapping = {}
+
+        # 清空文件
+        data_files = [
+            "output/unified_data.json",
+            "output/search_data.json",
+            "output/topic_graph_data.json"
+        ]
+
+        for file_path in data_files:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    # 重新创建空文件
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump({"chat_groups": []}, f)
+                except:
+                    pass
+
+        # 重新初始化模块
+        self.init_modules()
+
+    def _export_group_data(self, group):
+        """导出群聊数据"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"group_export_{group['group_name']}_{timestamp}.json"
+
+        export_data = {
+            "export_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "group_data": group
+        }
+
+        # 创建下载按钮
+        st.download_button(
+            label="📥 下载数据",
+            data=json.dumps(export_data, ensure_ascii=False, indent=2),
+            file_name=filename,
+            mime="application/json"
+        )
 
     # ==================== 保留原有方法（稍作修改） ====================
     def load_data(self):
@@ -918,7 +1096,8 @@ class FrontendManager:
             "📊 分析概览",
             "🗂️ 话题浏览",
             "🕸️ 话题图谱",
-            "🔍 智能搜索"
+            "🔍 智能搜索",
+            "🗑️ 数据管理"  # 新增：数据管理页面
         ], key="page_navigation")
 
         # 重置按钮
@@ -931,6 +1110,12 @@ class FrontendManager:
             st.session_state.current_group = None
             st.session_state.topic_mapping = {}
             st.session_state.data_file = None
+            st.session_state.custom_group_name = ""
+            st.session_state.selected_group_for_deletion = None
+            st.session_state.graph_group_select = None  # 修改：清空话题图谱选择器
+            st.session_state.last_search_topic = None
+            st.session_state.search_expanded_topic_id = None  # 清空搜索展开的话题
+            st.session_state.search_topic_details = {}  # 清空搜索话题详情
             st.rerun()
 
         return page, priority_filter
@@ -958,20 +1143,44 @@ class FrontendManager:
         participants_set = set()
         all_topics = []
 
+        # 修复：从聊天记录中提取参与者
         for group in data["chat_groups"]:
             for topic in group.get("topics", []):
                 total_topics += 1
                 # 从相关记录中提取参与者
                 for record in topic.get("related_records", []):
                     if isinstance(record, str):
-                        if "：" in record:
-                            parts = record.split("：", 1)
-                            if parts and parts[0].strip():
-                                participants_set.add(parts[0].strip())
-                        elif ":" in record:
-                            parts = record.split(":", 1)
-                            if parts and parts[0].strip():
-                                participants_set.add(parts[0].strip())
+                        # 尝试匹配多种格式： "说话人: 内容" 或 "说话人：内容" 或 "时间 说话人: 内容"
+                        # 先去除时间部分（如果有）
+                        record_content = record
+
+                        # 如果有时间戳，先去除
+                        import re
+                        # 匹配常见的时间格式
+                        time_pattern = r'\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}:\d{2}|\d{1,2}:\d{2}:\d{2}|\d{1,2}:\d{2}'
+                        match_time = re.match(f'^({time_pattern})\s+', record)
+                        if match_time:
+                            record_content = record[len(match_time.group(0)):]
+
+                        # 现在提取说话人
+                        # 尝试匹配 "说话人: 内容" 或 "说话人：内容"
+                        if "：" in record_content:
+                            parts = record_content.split("：", 1)
+                            if parts and len(parts) == 2 and parts[0].strip():
+                                speaker = parts[0].strip()
+                                participants_set.add(speaker)
+                        elif ":" in record_content:
+                            parts = record_content.split(":", 1)
+                            if parts and len(parts) == 2 and parts[0].strip():
+                                speaker = parts[0].strip()
+                                participants_set.add(speaker)
+                        # 如果是英文格式
+                        elif ": " in record_content:
+                            parts = record_content.split(": ", 1)
+                            if parts and len(parts) == 2 and parts[0].strip():
+                                speaker = parts[0].strip()
+                                participants_set.add(speaker)
+
                 total_messages += len(topic.get("related_records", []))
                 all_topics.append(topic['topic_name'])
 
@@ -1021,32 +1230,17 @@ class FrontendManager:
             for pending in data["analysis_info"]["pending_items"]:
                 st.write(f"• {pending}")
 
-        # 话题优先级分布
-        if total_topics > 0:
-            st.markdown("---")
-            st.subheader("📊 话题优先级分布")
-
-            priority_counts = {"高": 0, "中": 0, "低": 0}
-            for group in data["chat_groups"]:
-                for topic in group.get("topics", []):
-                    priority = topic.get("priority", "中")
-                    priority_counts[priority] = priority_counts.get(priority, 0) + 1
-
-            fig = go.Figure(data=[go.Pie(
-                labels=list(priority_counts.keys()),
-                values=list(priority_counts.values()),
-                hole=.3,
-                marker=dict(colors=['#FF6B6B', '#4ECDC4', '#45B7D1'])
-            )])
-            fig.update_layout(
-                title="话题优先级分布",
-                showlegend=True
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        # 问题3：删除话题优先级分布图表
+        # 不再显示话题优先级分布饼图
 
     def render_topics_browse(self, data, priority_filter):
         """渲染话题浏览页面"""
         st.title("🗂️ 话题浏览")
+
+        # 检查是否有搜索跳转的话题
+        if st.session_state.last_search_topic:
+            st.session_state.current_topic = st.session_state.last_search_topic
+            st.session_state.last_search_topic = None
 
         if not data.get("chat_groups"):
             st.info("请先上传聊天记录文件进行分析")
@@ -1141,9 +1335,12 @@ class FrontendManager:
         }
         color = priority_color.get(topic.get("priority", "中"), "#45B7D1")
 
+        # 修改：如果当前话题是被选中的话题，自动展开
+        is_expanded = topic['topic_id'] == st.session_state.current_topic
+
         with st.expander(
                 f"🔸 {topic['topic_name']} (优先级: {topic.get('priority', '中')}, 相关记录: {len(topic.get('related_records', []))})",
-                expanded=index == 0):
+                expanded=is_expanded):
 
             col1, col2 = st.columns([3, 1])
 
@@ -1198,21 +1395,21 @@ class FrontendManager:
                         with st.expander("📋 话题分析报告", expanded=True):
                             st.markdown(report_content)
 
-                            # 提供下载按钮
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            report_text = f"""# 话题分析报告
+                        # 提供下载按钮
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        report_text = f"""# 话题分析报告
 ## 话题名称: {topic['topic_name']}
 ## 话题ID: {topic['topic_id']}
 ## 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 {report_content}
 """
-                            st.download_button(
-                                label="📥 下载报告",
-                                data=report_text,
-                                file_name=f"topic_report_{topic['topic_id']}_{timestamp}.md",
-                                mime="text/markdown"
-                            )
+                        st.download_button(
+                            label="📥 下载报告",
+                            data=report_text,
+                            file_name=f"topic_report_{topic['topic_id']}_{timestamp}.md",
+                            mime="text/markdown"
+                        )
             with col3:
                 if st.button("❌ 取消", key=f"cancel_{topic['topic_id']}"):
                     st.session_state.edit_mode = False
@@ -1261,21 +1458,21 @@ class FrontendManager:
                         with st.expander("📋 话题分析报告", expanded=True):
                             st.markdown(report_content)
 
-                            # 提供下载按钮
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            report_text = f"""# 话题分析报告
+                        # 提供下载按钮
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        report_text = f"""# 话题分析报告
 ## 话题名称: {topic['topic_name']}
 ## 话题ID: {topic['topic_id']}
-## 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+## 生成时间: {datetime.now().strftime("%Y-%m-d %H:%M:%S")}
 
 {report_content}
 """
-                            st.download_button(
-                                label="📥 下载报告",
-                                data=report_text,
-                                file_name=f"topic_report_{topic['topic_id']}_{timestamp}.md",
-                                mime="text/markdown"
-                            )
+                        st.download_button(
+                            label="📥 下载报告",
+                            data=report_text,
+                            file_name=f"topic_report_{topic['topic_id']}_{timestamp}.md",
+                            mime="text/markdown"
+                        )
 
     def render_search(self, data):
         """渲染智能搜索页面"""
@@ -1334,6 +1531,7 @@ class FrontendManager:
                     st.success(f"找到 {len(formatted_results)} 条相关结果，分布在 {len(sorted_topics)} 个话题中")
 
                     for topic_id, topic_data in sorted_topics:
+                        # 问题3：使用expander显示搜索结果，不刷新页面
                         with st.expander(
                                 f"📌 {topic_data['topic_name']} (相关度: {topic_data['max_score']:.2f}, {len(topic_data['results'])}条结果)"):
                             # 显示话题基本信息
@@ -1343,20 +1541,84 @@ class FrontendManager:
                             # 显示搜索结果
                             for i, result in enumerate(topic_data['results']):
                                 st.write(f"**匹配内容**: {result['content']}")
-                                st.write(f"**搜索类型**: {'关键词匹配' if result['search_type'] == 'keyword' else '语义匹配'}")
+                                st.write(
+                                    f"**搜索类型**: {'关键词匹配' if result['search_type'] == 'keyword' else '语义匹配'}")
                                 st.write(f"**相关度**: {result['score']:.2f}")
-
-                                # 提供跳转到话题的链接
-                                if st.button(f"查看该话题详情", key=f"goto_{topic_id}_{i}"):
-                                    st.session_state.current_topic = topic_id
-                                    st.rerun()
 
                                 if i < len(topic_data['results']) - 1:
                                     st.divider()
+
+                            # 问题3：直接在expander内显示聊天记录详情，不刷新页面
+                            # 获取话题详情
+                            topic = None
+                            for group in data.get("chat_groups", []):
+                                for t in group.get("topics", []):
+                                    if t["topic_id"] == topic_id:
+                                        topic = t
+                                        break
+                                if topic:
+                                    break
+
+                            if topic:
+                                # 使用一个嵌套的expander显示聊天记录详情
+                                with st.expander("📖 查看聊天记录详情", expanded=False):
+                                    self._render_search_topic_records(topic)
+
                 else:
                     st.warning("没有找到相关结果")
             else:
                 st.warning("搜索服务返回空结果或发生错误")
+
+    def _render_search_topic_records(self, topic):
+        """在搜索页面渲染话题聊天记录"""
+        # 显示所有摘要
+        if topic.get("summaries"):
+            st.write("**话题摘要:**")
+            for i, summary in enumerate(topic['summaries'], 1):
+                st.write(f"{i}. {summary}")
+
+        # 显示相关聊天记录
+        if topic.get("related_records"):
+            st.write("**相关聊天记录:**")
+            for record in topic.get("related_records", []):
+                if isinstance(record, str):
+                    if "：" in record:
+                        parts = record.split("：", 1)
+                        if len(parts) == 2:
+                            st.write(f"**{parts[0]}**: {parts[1]}")
+                        else:
+                            st.write(f"{record}")
+                    elif ":" in record:
+                        parts = record.split(":", 1)
+                        if len(parts) == 2:
+                            st.write(f"**{parts[0]}**: {parts[1]}")
+                        else:
+                            st.write(f"{record}")
+                    else:
+                        st.write(f"{record}")
+
+        # 提供生成报告按钮（在expander内）
+        if st.button("📄 生成详细报告", key=f"gen_report_search_{topic['topic_id']}"):
+            report_content = self.generate_topic_report(topic['topic_id'])
+            if report_content:
+                with st.expander("📋 话题分析报告", expanded=True):
+                    st.markdown(report_content)
+
+                # 提供下载按钮
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                report_text = f"""# 话题分析报告
+## 话题名称: {topic['topic_name']}
+## 话题ID: {topic['topic_id']}
+## 生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+{report_content}
+"""
+                st.download_button(
+                    label="📥 下载报告",
+                    data=report_text,
+                    file_name=f"topic_report_{topic['topic_id']}_{timestamp}.md",
+                    mime="text/markdown"
+                )
 
     def run(self):
         """运行主应用"""
@@ -1375,6 +1637,9 @@ class FrontendManager:
             self.render_topic_graph(data)
         elif page == "🔍 智能搜索":
             self.render_search(data)
+        elif page == "🗑️ 数据管理":  # 新增页面
+            self.render_data_management(data)
+
 
 if __name__ == "__main__":
     # 初始化页面配置
@@ -1387,10 +1652,10 @@ if __name__ == "__main__":
 
     # 显示标题和说明
     st.title("💬 群聊分析系统")
-    st.markdown("""
+    st.markdown("""\
     ### 使用步骤
-    1. 在左侧输入API密钥（使用Modelscope API）
-    2. 上传聊天记录文件（支持TXT、PDF、DOC、DOCX格式）
+    1. 在左侧输入API密钥
+    2. 上传聊天记录文件（支持PDF、DOC、DOCX格式）
     3. 点击"开始分析"按钮进行分析
     4. 使用不同页面查看分析结果
 
