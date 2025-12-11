@@ -875,7 +875,6 @@ class FrontendManager:
             st.error(f"生成报告失败: {str(e)}")
             return None
 
-    # ==================== 新增功能：删除分析数据 ====================
     def render_data_management(self, data):
         """渲染数据管理页面"""
         st.title("🗑️ 数据管理")
@@ -1136,56 +1135,20 @@ class FrontendManager:
         # 计算统计信息
         total_messages = 0
         total_topics = 0
-        participants_set = set()
         all_topics = []
 
         for group in data["chat_groups"]:
             for topic in group.get("topics", []):
                 total_topics += 1
-                # 从相关记录中提取参与者
-                for record in topic.get("related_records", []):
-                    if isinstance(record, str):
-                        # 尝试匹配多种格式： "说话人: 内容" 或 "说话人：内容" 或 "时间 说话人: 内容"
-                        # 先去除时间部分（如果有）
-                        record_content = record
-
-                        # 如果有时间戳，先去除
-                        import re
-                        # 匹配常见的时间格式
-                        time_pattern = r'\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}:\d{2}|\d{1,2}:\d{2}:\d{2}|\d{1,2}:\d{2}'
-                        match_time = re.match(f'^({time_pattern})\s+', record)
-                        if match_time:
-                            record_content = record[len(match_time.group(0)):]
-
-                        # 提取说话人
-                        if "：" in record_content:
-                            parts = record_content.split("：", 1)
-                            if parts and len(parts) == 2 and parts[0].strip():
-                                speaker = parts[0].strip()
-                                participants_set.add(speaker)
-                        elif ":" in record_content:
-                            parts = record_content.split(":", 1)
-                            if parts and len(parts) == 2 and parts[0].strip():
-                                speaker = parts[0].strip()
-                                participants_set.add(speaker)
-                        # 如果是英文格式
-                        elif ": " in record_content:
-                            parts = record_content.split(": ", 1)
-                            if parts and len(parts) == 2 and parts[0].strip():
-                                speaker = parts[0].strip()
-                                participants_set.add(speaker)
-
                 total_messages += len(topic.get("related_records", []))
                 all_topics.append(topic['topic_name'])
 
         # 关键指标卡片
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
 
         with col1:
             st.metric("总消息数", f"{total_messages} 条")
         with col2:
-            st.metric("参与人数", f"{len(participants_set)} 人")
-        with col3:
             st.metric("总话题数", f"{total_topics} 个")
 
         st.markdown("---")
