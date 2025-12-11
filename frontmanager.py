@@ -842,6 +842,29 @@ class FrontendManager:
             # 确保分析器中有当前数据
             if not self.analyzer.chat_structure:
                 self.analyzer.chat_structure = st.session_state.analysis_data
+            else:
+                # 将会话数据拷贝到分析器
+                self.analyzer.chat_structure = st.session_state.analysis_data.copy()
+
+            # 检查话题是否存在
+            topic_found = False
+            for group in self.analyzer.chat_structure.get("chat_groups", []):
+                for topic in group.get("topics", []):
+                    if topic["topic_id"] == topic_id:
+                        topic_found = True
+                        break
+                if topic_found:
+                    break
+
+            if not topic_found:
+                st.error(f"话题ID {topic_id} 不存在于分析器的数据结构中")
+                # 打印当前分析器中的所有话题ID，用于调试
+                all_topic_ids = []
+                for group in self.analyzer.chat_structure.get("chat_groups", []):
+                    for topic in group.get("topics", []):
+                        all_topic_ids.append(topic["topic_id"])
+                st.write("当前分析器中的话题ID列表:", all_topic_ids)
+                return None
 
             # 生成详细报告
             report_content = self.analyzer.generate_report(
