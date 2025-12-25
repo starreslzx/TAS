@@ -19,7 +19,8 @@ pip install -r requirements.txt
 streamlit run frontmanager.py
 ```
 ## Note
-You need to change your api_key in the tas/config
+You need to change your api_key in the TAS/config
+
 
 
 
