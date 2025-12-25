@@ -2,12 +2,12 @@
 
 ## Clone this repository and navigate to folder
 ```
-git clone https://github.com/starreslzx/TAS.git<br>
+git clone https://github.com/starreslzx/TAS.git
 cd TAS
 ```
 ## Create environment
 ```
-conda create --name tas python=9.12<br>
+conda create --name tas python=9.12
 conda activate tas
 ```
 ## Install Package
@@ -20,6 +20,7 @@ streamlit run frontmanager.py
 ```
 ## Note
 You need to change your api_key in the tas/config
+
 
 
 
