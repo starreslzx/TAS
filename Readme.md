@@ -9,7 +9,8 @@ conda activate tas
 ## Install Package
 pip install -r requirements.txt
 ## Quick start
-streamlit frontmanager.py
+streamlit run frontmanager.py
 ## Note
-You need to change your api_key in the....
+You need to change your api_key in the tas/config
+
 
